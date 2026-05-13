@@ -33,7 +33,7 @@ Each experiment trains on whatever accelerator is available (`accelerator="auto"
 **What you CAN modify:**
 - `simple_model.py` — encoder internals, anything inside.
 - In `main.py`, almost everything below the data layer:
-  - The `LitBOLD` class (model wiring, loss, optimizer, training_step, mask logic, etc.).
+  - The `LitBOLD` class (model wiring, loss, optimizer, training_step, mask logic, etc.). **The training loss must be self-supervised** — see Pretraining constraint below.
   - The `MASK_RATIO` constant, the `WINDOW` constant.
   - The `BOLDWindows` class — change the windowing strategy, use overlapping windows, use variable-length windows, or skip windowing entirely and feed the full subject time series.
   - `extract_hidden_features` — pool however you like (mean over time, last token, attention pool, a fresh forward without windowing, etc.).
@@ -47,6 +47,14 @@ Each experiment trains on whatever accelerator is available (`accelerator="auto"
 - The **data and split**: `N_PARCELS`, `N_SUBJECTS`, `SPLIT`, `SPLIT_SEED`, `fetch_and_parcellate`, `split_subjects`. These define which subjects every experiment sees and which subjects are held out for test — changing them breaks comparability across runs.
 - The literal `print(...)` lines under the `---` separator at the bottom of `main()`. The metric **keys**, **order**, and **format strings** are the contract the loop relies on. (The functions that *produce* the values are editable — only the final emission is fixed.)
 - `pyproject.toml` (no new dependencies — use what's installed).
+
+### Pretraining constraint
+
+The encoder is being **pretrained**. No labels are allowed in the training loss. None of `Gender`, `Child_Adult`, `Age`, `AgeGroup`, `Handedness`, or any other column of `pheno` may enter any term that backpropagates to the encoder. Pretraining is self-supervised — the model gets the BOLD signal and nothing else.
+
+The probe step (after training is over) is allowed to read train-subject labels and fit a classifier — that is what a probe *is* — but the encoder must already be done training by then and must not receive gradient from those labels. With the baseline's sklearn LDA this is automatic (LDA doesn't backprop). If you swap in a learned probe head, freeze the encoder before fitting it.
+
+Forbidden: supervised auxiliary losses, label-conditioned masking, contrastive losses keyed on subject metadata, anything that lets the model peek. The point of the loop is pretraining research.
 
 ### Evaluation contract
 
