@@ -123,7 +123,7 @@ class LitBOLD(L.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=self.hparams.lr)
+        return torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=1e-2)
 
 
 # ---------- linear probe ----------
@@ -234,6 +234,7 @@ def main():
         accelerator="auto",
         log_every_n_steps=10,
         enable_progress_bar=False,
+        gradient_clip_val=1.0,
     )
     t_fit_start = time.monotonic()
     trainer.fit(model, make_loader(train_idx, True))
