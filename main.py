@@ -61,13 +61,15 @@ def split_subjects(n, fractions=SPLIT, seed=SPLIT_SEED):
 
 
 class BOLDWindows(Dataset):
-    def __init__(self, series, window=WINDOW):
+    def __init__(self, series, window=WINDOW, stride=None):
         self.series = series
         self.window = window
+        if stride is None:
+            stride = window
         self.index = [
             (i, s)
             for i, ts in enumerate(series)
-            for s in range(0, ts.shape[0] - window + 1, window)
+            for s in range(0, ts.shape[0] - window + 1, stride)
         ]
 
     def __len__(self):
@@ -143,7 +145,7 @@ def extract_hidden_features(model, series_list):
     model.eval()
     with torch.no_grad():
         for subj_i, series in enumerate(series_list):
-            ds = BOLDWindows([series])
+            ds = BOLDWindows([series], stride=WINDOW // 2)
             if len(ds) == 0:
                 continue
             x = torch.stack([ds[i] for i in range(len(ds))]).to(device)
@@ -225,7 +227,7 @@ def main():
     print(f"test  subjects ({len(test_idx)}): {[subject_ids[i] for i in test_idx]}")
 
     def make_loader(idx, shuffle):
-        ds = BOLDWindows([series[i] for i in idx])
+        ds = BOLDWindows([series[i] for i in idx], stride=WINDOW // 2)
         return DataLoader(ds, batch_size=4, shuffle=shuffle, num_workers=0)
 
     model = LitBOLD()
