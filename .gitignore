@@ -1,0 +1,18 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Data
+lightning_logs
+nilearn_cache
+
+# Autoresearch local artifacts (per CLAUDE.md — not tracked)
+results.tsv
+run.log
+
+# Virtual environments
+.venv
