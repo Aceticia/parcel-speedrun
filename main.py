@@ -129,7 +129,7 @@ class LitBOLD(L.LightningModule):
 
 
 def extract_hidden_features(model, series_list):
-    """Per window, the CLS-token output of the encoder.
+    """Per window, the mean of time-token outputs (skipping CLS).
 
     Returns:
         features: [N, dim] float array, one row per window.
@@ -144,8 +144,8 @@ def extract_hidden_features(model, series_list):
             if len(ds) == 0:
                 continue
             x = torch.stack([ds[i] for i in range(len(ds))]).to(device)
-            cls = model.encoder(x)[:, 0]  # [n_windows, dim]
-            feats.append(cls.cpu().numpy())
+            pooled = model.encoder(x)[:, 1:].mean(dim=1)  # [n_windows, dim]
+            feats.append(pooled.cpu().numpy())
             subjs.extend([subj_i] * len(ds))
     return np.concatenate(feats, axis=0), np.array(subjs)
 
