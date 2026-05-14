@@ -1,141 +1,54 @@
-"""Simple BOLD encoder.
+"""Simple BOLD encoder: input MLP + CLS token + standard transformer.
 
-Convention: throughout this module, `padding_mask` is a `[B, T]` boolean
-tensor where `True` marks padded (invalid) positions, matching PyTorch's
-`key_padding_mask`.
+Per window, time-step parcels are projected by a 2-layer MLP into `dim`, a
+learnable CLS token is prepended, learned positional embeddings are added, and
+a stack of standard pre-norm `nn.TransformerEncoderLayer`s mixes everything.
+The CLS output is the per-window summary feature.
 """
-
-from typing import Optional
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from timm.layers import RotaryEmbeddingCat
-from timm.models.eva import EvaAttention
-
-
-class FFW(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super().__init__()
-        self.w1 = nn.Linear(input_dim, hidden_dim, bias=False)
-        self.w2 = nn.Linear(hidden_dim, output_dim, bias=False)
-
-    def forward(self, x):
-        return self.w2(F.relu(self.w1(x)))
-
-
-class SimpleBrainEncoderLayer(nn.Module):
-    def __init__(self, input_dim, hidden_dim, temporal_latent_dim, ffw_dim, num_heads):
-        super().__init__()
-        total_dim = input_dim + hidden_dim + temporal_latent_dim
-        self.norm1 = nn.RMSNorm(total_dim)
-        self.ffw = FFW(total_dim, ffw_dim, total_dim - input_dim)
-        self.norm2 = nn.RMSNorm(temporal_latent_dim)
-        self.temporal = EvaAttention(
-            temporal_latent_dim,
-            num_heads,
-            qk_norm=True,
-            norm_layer=nn.RMSNorm,
-            num_prefix_tokens=0,
-        )
-
-        self.in_dim, self.hidden_dim, self.t_dim = (
-            input_dim,
-            hidden_dim,
-            temporal_latent_dim,
-        )
-
-    def forward(self, x, rope, padding_mask: Optional[torch.Tensor] = None):
-        """
-        x: [B, T, input_dim|hidden_dim|temporal_latent_dim]
-
-        We first apply a width-direction FFW to update everything but the
-        input_dim, then apply some temporal processing along time.
-        """
-
-        # Only update the non-input dims
-        x_update = self.ffw(self.norm1(x))
-        x = F.pad(x_update, (self.in_dim, 0)) + x
-
-        # Temporal attention on the trailing temporal_latent_dim slice
-        t = x[..., -self.t_dim :]
-        attn_mask = None
-        if padding_mask is not None:
-            # SDPA boolean mask: True = attend. Shape broadcasts to [B,H,T,T].
-            keep = ~padding_mask
-            attn_mask = keep[:, None, None, :]
-        attention_update = self.temporal(self.norm2(t), rope=rope, attn_mask=attn_mask)
-        x = torch.cat(
-            [x[..., : -self.t_dim], t + attention_update],
-            dim=-1,
-        )
-        return x
 
 
 class SimpleBOLDEncoder(nn.Module):
     def __init__(
         self,
         n_parcels,
-        input_dim,
-        hidden_dim,
-        temporal_dim,
-        ffw_dim,
-        depth,
-        num_heads,
-        preprocessor_hidden_dim: Optional[int] = None,
+        dim=384,
+        ffw_dim=1536,
+        depth=6,
+        num_heads=6,
+        preprocessor_hidden_dim=512,
+        max_len=64,
     ):
         super().__init__()
-        if preprocessor_hidden_dim is None:
-            preprocessor_hidden_dim = n_parcels * 4
-        self.preprocessor = FFW(n_parcels, preprocessor_hidden_dim, input_dim)
-        self.hidden_dim, self.t_dim = hidden_dim, temporal_dim
-
-        # Learned token used to replace the input-dim embedding at masked
-        # timesteps during pretraining. Inert when `mask` is not passed.
-        self.mask_token = nn.Parameter(torch.zeros(input_dim))
-        nn.init.normal_(self.mask_token, std=0.02)
-
-        self.blocks = nn.ModuleList(
-            [
-                SimpleBrainEncoderLayer(
-                    input_dim=input_dim,
-                    hidden_dim=hidden_dim,
-                    temporal_latent_dim=temporal_dim,
-                    ffw_dim=ffw_dim,
-                    num_heads=num_heads,
-                )
-                for _ in range(depth)
-            ]
+        self.preprocessor = nn.Sequential(
+            nn.Linear(n_parcels, preprocessor_hidden_dim),
+            nn.GELU(),
+            nn.Linear(preprocessor_hidden_dim, dim),
         )
-
-        # 1D rope over the time axis. We pass 2*head_dim because RotaryEmbeddingCat
-        # produces a width-`dim` embed in 1D (only one spatial axis contributes
-        # bands), which apply_rot_embed_cat then chunks in half — so dim must be
-        # 2*head_dim for the halves to match the per-head width. feat_shape=None
-        # keeps cached bands so we can rebuild the embed for variable T.
-        self.rope = RotaryEmbeddingCat(
-            2 * (temporal_dim // num_heads), in_pixels=False, feat_shape=None
+        self.mask_token = nn.Parameter(torch.empty(dim).normal_(std=0.02))
+        self.cls_token = nn.Parameter(torch.empty(dim).normal_(std=0.02))
+        self.pos_emb = nn.Parameter(torch.empty(max_len + 1, dim).normal_(std=0.02))
+        layer = nn.TransformerEncoderLayer(
+            d_model=dim,
+            nhead=num_heads,
+            dim_feedforward=ffw_dim,
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
+            dropout=0.0,
         )
+        self.transformer = nn.TransformerEncoder(layer, num_layers=depth)
 
-    def forward(
-        self,
-        parcels,
-        padding_mask: Optional[torch.Tensor] = None,
-        mask: Optional[torch.Tensor] = None,
-    ):
-        """
-        parcels: [B, T, n_parcels]
-        mask: [B, T] bool. True positions have their input-dim embedding
-            replaced by the learned `mask_token` (MLM-style pretraining).
-
-        Returns the full hidden state [B, T, input_dim + hidden_dim + temporal_dim].
-        """
+    def forward(self, parcels, mask=None):
+        """parcels: [B, T, n_parcels]. mask: [B, T] bool — masked positions get
+        the learned mask_token in place of the embedding. Returns [B, T+1, dim]
+        where index 0 is the CLS token output and 1..T+1 are time-token outputs."""
         emb = self.preprocessor(parcels)
         if mask is not None:
             emb = torch.where(mask.unsqueeze(-1), self.mask_token, emb)
-        # Zero-init the hidden + temporal channels appended to the input dims
-        x = F.pad(emb, (0, self.hidden_dim + self.t_dim))
-        rope = self.rope.get_embed(shape=[x.shape[1]])
-        for block in self.blocks:
-            x = block(x, rope=rope, padding_mask=padding_mask)
-        return x
+        B, T, _ = emb.shape
+        cls = self.cls_token.expand(B, 1, -1)
+        x = torch.cat([cls, emb], dim=1) + self.pos_emb[: T + 1]
+        return self.transformer(x)

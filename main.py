@@ -1,7 +1,7 @@
 """MLM pretrain on Schaefer parcels, then LDA probe (gender, child/adult).
 
-Pretrains `SimpleBOLDEncoder` with masked time-step reconstruction, then averages
-the hidden-dim slice across time per window and fits LDA on a subject-level
+Pretrains `SimpleBOLDEncoder` with masked time-step reconstruction, then uses
+the CLS-token output as the per-window feature and fits LDA on a subject-level
 train/test split.
 """
 
@@ -87,12 +87,10 @@ class LitBOLD(L.LightningModule):
     def __init__(
         self,
         n_parcels=N_PARCELS,
-        input_dim=512,
-        hidden_dim=256,
-        temporal_dim=256,
-        ffw_dim=1024,
+        dim=384,
+        ffw_dim=1536,
         depth=6,
-        num_heads=4,
+        num_heads=6,
         preprocessor_hidden_dim=512,
         mask_ratio=MASK_RATIO,
         lr=1e-3,
@@ -101,22 +99,21 @@ class LitBOLD(L.LightningModule):
         self.save_hyperparameters()
         self.encoder = SimpleBOLDEncoder(
             n_parcels=n_parcels,
-            input_dim=input_dim,
-            hidden_dim=hidden_dim,
-            temporal_dim=temporal_dim,
+            dim=dim,
             ffw_dim=ffw_dim,
             depth=depth,
             num_heads=num_heads,
             preprocessor_hidden_dim=preprocessor_hidden_dim,
         )
-        self.head = nn.Linear(input_dim + hidden_dim + temporal_dim, n_parcels)
+        self.head = nn.Linear(dim, n_parcels)
 
     def _masked_recon_loss(self, x):
         B, T, _ = x.shape
         mask = torch.rand(B, T, device=x.device) < self.hparams.mask_ratio
         if not mask.any():
             mask[:, 0] = True
-        pred = self.head(self.encoder(x, mask=mask))
+        out = self.encoder(x, mask=mask)  # [B, T+1, dim] — index 0 is CLS
+        pred = self.head(out[:, 1:])  # [B, T, n_parcels]
         return F.mse_loss(pred[mask], x[mask])
 
     def training_step(self, batch, batch_idx):
@@ -132,14 +129,12 @@ class LitBOLD(L.LightningModule):
 
 
 def extract_hidden_features(model, series_list):
-    """Per window, mean of the hidden-dim slice across time.
+    """Per window, the CLS-token output of the encoder.
 
     Returns:
-        features: [N, hidden_dim] float array, one row per window.
+        features: [N, dim] float array, one row per window.
         subject:  [N] int array, the subject index for each row.
     """
-    in_dim = model.hparams.input_dim
-    hid_dim = model.hparams.hidden_dim
     device = next(model.parameters()).device
     feats, subjs = [], []
     model.eval()
@@ -149,9 +144,8 @@ def extract_hidden_features(model, series_list):
             if len(ds) == 0:
                 continue
             x = torch.stack([ds[i] for i in range(len(ds))]).to(device)
-            h = model.encoder(x)  # [n_windows, T, in+hid+t]
-            hid = h[..., in_dim : in_dim + hid_dim].mean(dim=1)  # [n_windows, hid]
-            feats.append(hid.cpu().numpy())
+            cls = model.encoder(x)[:, 0]  # [n_windows, dim]
+            feats.append(cls.cpu().numpy())
             subjs.extend([subj_i] * len(ds))
     return np.concatenate(feats, axis=0), np.array(subjs)
 
@@ -244,7 +238,7 @@ def main():
     train_loss = float(trainer.callback_metrics.get("train_loss", float("nan")))
 
     X_all, subj_all = extract_hidden_features(model, series)
-    print(f"\nfeature matrix: {X_all.shape}, hidden_dim={model.hparams.hidden_dim}")
+    print(f"\nfeature matrix: {X_all.shape}, dim={model.hparams.dim}")
 
     gender = pheno["Gender"].to_numpy()
     child_adult = pheno["Child_Adult"].to_numpy()
