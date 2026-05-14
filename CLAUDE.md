@@ -21,7 +21,7 @@ To set up a new experiment, work with the user to:
    - `main.py` — most of this is editable. The off-limits parts are the data-and-split block (`N_PARCELS`, `N_SUBJECTS`, `SPLIT`, `SPLIT_SEED`, `fetch_and_parcellate`, `split_subjects`) and the `---` summary `print` lines at the bottom of `main()`. Everything else — model, windowing, feature extraction, probe — is yours.
    - `simple_model.py` — the encoder. Editable.
 4. **Verify data exists**: First run will populate `~/nilearn_data/` and `nilearn_cache/` lazily. If you see fetches taking minutes, that's the first-time cache warm-up — subsequent runs are fast.
-5. **Initialize `results.tsv`**: Create `results.tsv` with just the header row (see "Logging results" below). The baseline will be recorded after the first run.
+5. **Initialize `results.tsv`**: `results.tsv` persists across branches as the notebook of every idea tried (see "Logging results" below). If it already exists, **leave its contents intact** and just append a blank separator line so the new branch's rows are visually distinct from prior runs. Only if it doesn't exist, create it with just the header row. The baseline will be recorded after the first run.
 6. **Confirm and go**: Confirm setup looks good.
 
 Once you get confirmation, kick off the experimentation.
@@ -121,7 +121,7 @@ c3d4e5f	0.6900	0.8350	discard	switch to GELU in FFW
 d4e5f6g	0.0000	0.0000	crash	double model width (OOM on MPS)
 ```
 
-`results.tsv` is intentionally **not tracked** by git — leave it untracked. Each experiment's commit captures the code; the TSV is the local notebook.
+`results.tsv` is intentionally **not tracked** by git — leave it untracked. Each experiment's commit captures the code; the TSV is the local notebook. It **persists across branches**: new branches append below the existing rows, separated by a blank line. This is the only durable record of *failed* ideas, since `git reset --hard` wipes their commits from history — without it, future runs would happily re-try the same dead ends.
 
 ## The experiment loop
 
