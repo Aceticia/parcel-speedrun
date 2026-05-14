@@ -112,8 +112,7 @@ class LitBOLD(L.LightningModule):
         mask = torch.rand(B, T, device=x.device) < self.hparams.mask_ratio
         if not mask.any():
             mask[:, 0] = True
-        out = self.encoder(x, mask=mask)  # [B, T+1, dim] — index 0 is CLS
-        pred = self.head(out[:, 1:])  # [B, T, n_parcels]
+        pred = self.head(self.encoder(x, mask=mask))  # [B, T, n_parcels]
         return F.mse_loss(pred[mask], x[mask])
 
     def training_step(self, batch, batch_idx):
@@ -129,7 +128,7 @@ class LitBOLD(L.LightningModule):
 
 
 def extract_hidden_features(model, series_list):
-    """Per window, the mean of time-token outputs (skipping CLS).
+    """Per window, the mean of time-token outputs.
 
     Returns:
         features: [N, dim] float array, one row per window.
@@ -144,7 +143,7 @@ def extract_hidden_features(model, series_list):
             if len(ds) == 0:
                 continue
             x = torch.stack([ds[i] for i in range(len(ds))]).to(device)
-            pooled = model.encoder(x)[:, 1:].mean(dim=1)  # [n_windows, dim]
+            pooled = model.encoder(x).mean(dim=1)  # [n_windows, dim]
             feats.append(pooled.cpu().numpy())
             subjs.extend([subj_i] * len(ds))
     return np.concatenate(feats, axis=0), np.array(subjs)

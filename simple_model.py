@@ -1,9 +1,8 @@
-"""Simple BOLD encoder: input MLP + CLS token + standard transformer.
+"""Simple BOLD encoder: input MLP + standard transformer.
 
-Per window, time-step parcels are projected by a 2-layer MLP into `dim`, a
-learnable CLS token is prepended, learned positional embeddings are added, and
-a stack of standard pre-norm `nn.TransformerEncoderLayer`s mixes everything.
-The CLS output is the per-window summary feature.
+Per window, time-step parcels are projected by a 2-layer MLP into `dim`,
+learned positional embeddings are added, and a stack of standard pre-norm
+`nn.TransformerEncoderLayer`s mixes across time.
 """
 
 import torch
@@ -28,8 +27,7 @@ class SimpleBOLDEncoder(nn.Module):
             nn.Linear(preprocessor_hidden_dim, dim),
         )
         self.mask_token = nn.Parameter(torch.empty(dim).normal_(std=0.02))
-        self.cls_token = nn.Parameter(torch.empty(dim).normal_(std=0.02))
-        self.pos_emb = nn.Parameter(torch.empty(max_len + 1, dim).normal_(std=0.02))
+        self.pos_emb = nn.Parameter(torch.empty(max_len, dim).normal_(std=0.02))
         layer = nn.TransformerEncoderLayer(
             d_model=dim,
             nhead=num_heads,
@@ -43,12 +41,9 @@ class SimpleBOLDEncoder(nn.Module):
 
     def forward(self, parcels, mask=None):
         """parcels: [B, T, n_parcels]. mask: [B, T] bool — masked positions get
-        the learned mask_token in place of the embedding. Returns [B, T+1, dim]
-        where index 0 is the CLS token output and 1..T+1 are time-token outputs."""
+        the learned mask_token in place of the embedding. Returns [B, T, dim]."""
         emb = self.preprocessor(parcels)
         if mask is not None:
             emb = torch.where(mask.unsqueeze(-1), self.mask_token, emb)
-        B, T, _ = emb.shape
-        cls = self.cls_token.expand(B, 1, -1)
-        x = torch.cat([cls, emb], dim=1) + self.pos_emb[: T + 1]
+        x = emb + self.pos_emb[: emb.shape[1]]
         return self.transformer(x)
