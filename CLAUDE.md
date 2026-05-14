@@ -136,7 +136,7 @@ LOOP FOREVER:
 5. Read out the results: `grep "^probe_ca_test_bal:\|^probe_gender_test_bal:\|^train_loss:\|^total_seconds:\|^num_params_M:" run.log`.
 6. If the grep output is empty or missing `probe_ca_test_bal`, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get it to work after a few attempts, give up and log "crash".
 7. Record the results in `results.tsv` (do NOT commit `results.tsv`; leave it untracked).
-8. If `probe_ca_test_bal` improved (higher) by a meaningful amount, "advance" the branch — keep the commit. If it's equal or worse, `git reset --hard HEAD~1` back to where you started.
+8. If `probe_ca_test_bal` improved (higher) by a meaningful amount, "advance" the branch — amend the commit to include the metric (`git commit --amend -m "<desc> [ca=<probe_ca_test_bal>]"`) so the metric is durable in git history, then keep it. If it's equal or worse, `git reset --hard HEAD~1` back to where you started.
 9. Go to step 1.
 
 The idea is that you are a completely autonomous researcher trying things. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're stuck, you can rewind further, but do this very sparingly.
