@@ -22,7 +22,7 @@ from simple_model import SimpleBOLDEncoder
 
 N_PARCELS = 1000
 WINDOW = 32
-MASK_RATIO = 0.25
+MASK_RATIO = 0.5
 N_SUBJECTS = None  # None -> all available
 SPLIT = (0.8, 0.2)  # train, test
 SPLIT_SEED = 0
