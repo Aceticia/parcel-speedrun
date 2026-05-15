@@ -63,13 +63,13 @@ Whatever you do internally, the reported `probe_ca_test_bal` and `probe_gender_t
 1. Computed on the **test subjects** as returned by `split_subjects(...)`. No peeking at train labels for feature normalization in a way that crosses the split, no training the classifier on test subjects.
 2. **Subject-level**: produce exactly one prediction per test subject (one Child/Adult label, one Gender label), then compute `sklearn.metrics.balanced_accuracy_score(y_true_subjects, y_pred_subjects)`. *How* you collapse to one prediction per subject is your choice. Reporting a window-level number under the `probe_ca_test_bal` key violates the contract.
 
-**The goal**: get the **highest `probe_ca_test_bal`** (subject-level balanced accuracy for Child vs Adult on the test set, computed per the Evaluation contract above). Higher is better. Everything else in the summary block is informational. Gender is reported because it's a useful sanity check (it's roughly at chance on this dataset, so a sudden jump there often means a confound, not a win).
+**The goal**: push **`probe_gender_test_bal`** up (subject-level balanced accuracy for Gender on the test set, computed per the Evaluation contract above) **without meaningfully degrading `probe_ca_test_bal`**. The child/adult task already runs near ceiling on this dataset (~0.94 baseline), so the dual constraint matters: a notable drop on CA disqualifies the change even if gender improves. Treat **CA as the guardrail, gender as the objective**.
 
-**Why this metric**: Child/Adult is class-imbalanced (~80% child), so plain accuracy is misleading. The task is fundamentally a *per-subject* classification, so we collapse to one prediction per subject (via whatever aggregation you choose — see Evaluation contract) and score that. It is quantized in steps tied to the number of test subjects of each class, so small deltas are noisy — judge improvements with that in mind.
+**Why these metrics**: Gender on this dataset has historically sat near chance with masked-recon pretraining — the signal is much weaker than for age, which is why it's the harder target now. Both metrics are balanced accuracy because Child/Adult is heavily class-imbalanced (~80% child) and a single consistent scoring rule across the two probes keeps the comparison clean. Both are subject-level (one prediction per test subject, then balanced accuracy). With ~30 test subjects, deltas are quantized in steps tied to the per-class counts — judge improvements with that in mind, especially for CA where each adult flip is ~0.10.
 
 **A note on iterating against test**: Since there is no val split, the test set is what you optimize against. With ~30 test subjects this is bounded but not zero leakage — over many runs you will indirectly overfit. Bias toward changes that are principled rather than ones that just nudge the test number; deletions and simplifications are especially safe.
 
-**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Removing code and getting equal or better results is a great outcome — that's a simplification win. A 0.001 bump in `probe_ca_test_bal` for 20 lines of hacky code? Probably not worth it. The same bump from deleting code? Definitely keep.
+**Simplicity criterion**: All else being equal, simpler is better. A small improvement that adds ugly complexity is not worth it. Removing code and getting equal or better results is a great outcome — that's a simplification win. A 0.001 bump in `probe_gender_test_bal` for 20 lines of hacky code? Probably not worth it. The same bump from deleting code? Definitely keep.
 
 **The first run**: Your very first run should always be to establish the baseline — just run the training script as-is.
 
@@ -99,26 +99,29 @@ If a run finished cleanly, all metrics will appear. If the grep is empty, the ru
 
 When an experiment is done, log it to `results.tsv` (tab-separated, NOT comma-separated — commas break in descriptions).
 
-The TSV has a header row and 5 columns:
+The TSV has a header row and 6 columns:
 
 ```
-commit	probe_ca_test_bal	train_loss	status	description
+commit	probe_ca_test_bal	probe_gender_test_bal	train_loss	status	description
 ```
 
 1. git commit hash (short, 7 chars)
-2. `probe_ca_test_bal` — primary metric (e.g. 0.7140). Use 0.0000 for crashes.
-3. `train_loss` — informational (e.g. 0.8231). Use 0.0000 for crashes.
-4. status: `keep`, `discard`, or `crash`
-5. short text description of what this experiment tried (no commas)
+2. `probe_ca_test_bal` — guardrail metric (e.g. 0.9444). Use 0.0000 for crashes.
+3. `probe_gender_test_bal` — objective metric (e.g. 0.5727). Use 0.0000 for crashes.
+4. `train_loss` — informational (e.g. 0.7616). Use 0.0000 for crashes.
+5. status: `keep`, `discard`, or `crash`
+6. short text description of what this experiment tried (no commas)
+
+Older entries (from prior branches) may only have 5 columns — leave them as-is; they're frozen history.
 
 Example:
 
 ```
-commit	probe_ca_test_bal	train_loss	status	description
-a1b2c3d	0.7140	0.8231	keep	baseline
-b2c3d4e	0.7500	0.8104	keep	add weight decay 1e-2 to Adam
-c3d4e5f	0.6900	0.8350	discard	switch to GELU in FFW
-d4e5f6g	0.0000	0.0000	crash	double model width (OOM on MPS)
+commit	probe_ca_test_bal	probe_gender_test_bal	train_loss	status	description
+a1b2c3d	0.9444	0.5727	0.7616	keep	baseline
+b2c3d4e	0.9450	0.6500	0.7500	keep	add per-subject FFT features
+c3d4e5f	0.8500	0.7000	0.8000	discard	gender up but ca degraded too much
+d4e5f6g	0.0000	0.0000	0.0000	crash	double model width (OOM on MPS)
 ```
 
 `results.tsv` is intentionally **not tracked** by git — leave it untracked. Each experiment's commit captures the code; the TSV is the local notebook. It **persists across branches**: new branches append below the existing rows, separated by a blank line. This is the only durable record of *failed* ideas, since `git reset --hard` wipes their commits from history — without it, future runs would happily re-try the same dead ends.
@@ -136,7 +139,7 @@ LOOP FOREVER:
 5. Read out the results: `grep "^probe_ca_test_bal:\|^probe_gender_test_bal:\|^train_loss:\|^total_seconds:\|^num_params_M:" run.log`.
 6. If the grep output is empty or missing `probe_ca_test_bal`, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get it to work after a few attempts, give up and log "crash".
 7. Record the results in `results.tsv` (do NOT commit `results.tsv`; leave it untracked).
-8. If `probe_ca_test_bal` improved (higher) by a meaningful amount, "advance" the branch — amend the commit to include the metric (`git commit --amend -m "<desc> [ca=<probe_ca_test_bal>]"`) so the metric is durable in git history, then keep it. If it's equal or worse, `git reset --hard HEAD~1` back to where you started.
+8. If `probe_gender_test_bal` improved by a meaningful amount AND `probe_ca_test_bal` did not meaningfully degrade (use judgment — a one-subject-flip dip on CA is fine; a larger drop disqualifies even if gender improves), "advance" the branch — amend the commit to include both metrics (`git commit --amend -m "<desc> [gen=<probe_gender_test_bal> ca=<probe_ca_test_bal>]"`) so they're durable in git history, then keep it. Otherwise, `git reset --hard HEAD~1` back to where you started.
 9. Go to step 1.
 
 The idea is that you are a completely autonomous researcher trying things. If they work, keep. If they don't, discard. And you're advancing the branch so that you can iterate. If you feel like you're stuck, you can rewind further, but do this very sparingly.

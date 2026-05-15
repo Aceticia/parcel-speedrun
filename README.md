@@ -25,13 +25,13 @@ First run will warm `~/nilearn_data/` and `nilearn_cache/` (a few minutes of dow
 
 ## Baseline (one run, MPS, ~10 min)
 
-| metric                  | value   |
-| ----------------------- | ------- |
-| `probe_ca_test_bal`     | ~0.71   |
-| `probe_gender_test_bal` | ~0.53 (≈ chance) |
-| `num_params_M`          | 12.83   |
+| metric                  | value             |
+| ----------------------- | ----------------- |
+| `probe_ca_test_bal`     | ~0.94             |
+| `probe_gender_test_bal` | ~0.57 (≈ chance)  |
+| `num_params_M`          | 11.77             |
 
-Numbers are noisy — the test set is ~30 subjects. The point of the loop is to push `probe_ca_test_bal` up from this baseline.
+Numbers are noisy — the test set is ~30 subjects. The point of the loop is to push `probe_gender_test_bal` up from this baseline **without degrading `probe_ca_test_bal`**.
 
 ## Autoresearch
 
