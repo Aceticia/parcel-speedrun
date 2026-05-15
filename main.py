@@ -121,7 +121,7 @@ class LitBOLD(L.LightningModule):
         return loss
 
     def configure_optimizers(self):
-        return torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=1e-2)
+        return torch.optim.AdamW(self.parameters(), lr=self.hparams.lr, weight_decay=0.0)
 
 
 # ---------- linear probe ----------
