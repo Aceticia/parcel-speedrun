@@ -162,7 +162,7 @@ def fit_and_eval(label_name, y_subject, train_idx, test_idx, X_all, subj_all):
     X_tr, y_tr, s_tr = collect(train_idx)
     X_te, y_te, s_te = collect(test_idx)
 
-    lda = LinearDiscriminantAnalysis()
+    lda = LinearDiscriminantAnalysis(priors=[0.5, 0.5])
     lda.fit(X_tr, y_tr)
 
     results = {}
